@@ -78,6 +78,12 @@ module AWSElastigroup
   end
   module_function :aws
   
+  def check_groups
+    AWSElastigroup.config.groups.each do |group|
+    #Check group spot status: true = ok, false = instances running < desired capacity
+    puts "Checking group #{group.name}"
+    group.check_spot_status
+  end
   
   def run
     #client = @@aws::AutoScaling::Client.new(:region => "eu-central-1")
