@@ -15,9 +15,27 @@ module AWSElastigroup
       def check_spot_status
         client = AWSElastigroup.aws::AutoScaling::Client.new(:region => @region)
         resource = Aws::AutoScaling::Resource.new(client: client)
-        group = resource.group(@spot_name)
-        puts group.status
-        return (group.instances.count == group.desired_capacity)
+        spot_group = resource.group(@spot_name)
+        demand_group = resource.group(@on_demand_name)
+        #If spot instances not running        
+        if !(spot_group.instances.count == spot_group.desired_capacity)
+          puts "Spot group does not have required capacity"
+          
+          if demand_group.desired_capacity != demand_group.max_size
+            puts "Starting up on-demand instances"
+            demand_group.set_desired_capacity({
+              :desired_capacity => demand_group.max_size
+            })
+          end
+        else
+          puts "Spot group ok"
+          if demand_group.desired_capacity != demand_group.min_size
+            puts "Stopping on-demand instances"
+            demand_group.set_desired_capacity({
+              :desired_capacity => demand_group.min_size
+            })
+          end
+        end
       end
       
       def failover
@@ -80,10 +98,7 @@ module AWSElastigroup
       AWSElastigroup.config.groups.each do |group|
         #Check group spot status: true = ok, false = instances running < desired capacity
         puts "Checking group #{group.name}"
-        
-        status = group.check_spot_status
-        
-        puts "Group '#{group.name}' spot status: #{status}"
+        group.check_spot_status
       end
     end
 
