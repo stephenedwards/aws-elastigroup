@@ -85,6 +85,7 @@ module AWSElastigroup
       group.check_spot_status
     end
   end
+  module_function :check_groups
   
   def run
     #client = @@aws::AutoScaling::Client.new(:region => "eu-central-1")
