@@ -18,7 +18,7 @@ module AWSElastigroup
         spot_group = resource.group(@spot_name)
         demand_group = resource.group(@on_demand_name)
         #If spot instances not running        
-        if !(spot_group.instances.count == spot_group.desired_capacity)
+        if spot_group.instances.count < spot_group.desired_capacity
           puts "Spot group does not have required capacity"
           
           if demand_group.desired_capacity != demand_group.max_size
