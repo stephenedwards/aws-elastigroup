@@ -1,10 +1,27 @@
 require 'aws-sdk'
 require 'rufus-scheduler'
+require 'mini_cache'
 
 module AWSElastigroup
+  @@store = MiniCache::Store.new
+  @@scheduler = Rufus::Scheduler.new
+  
+  attr_accessor :store, :scheduler
+  
+  def self.store
+    @@store
+  end
+  
+  def self.scheduler
+    @@scheduler
+  end
+  
   class Configuration
+    attr_accessor :key, :secret, :groups
+    
+    # Start Group class
     class Group
-      attr_accessor :name, :region, :on_demand_name, :spot_name
+      attr_accessor :name, :region, :on_demand_name, :spot_name, :safe_interval
       
       def spot_group
         client = AWSElastigroup.aws::AutoScaling::Client.new(:region => @region)
@@ -17,20 +34,32 @@ module AWSElastigroup
         resource = Aws::AutoScaling::Resource.new(client: client)
         spot_group = resource.group(@spot_name)
         demand_group = resource.group(@on_demand_name)
+        
         #If spot instances not running        
-        if spot_group.instances.count < spot_group.desired_capacity
-          puts "Spot group does not have required capacity"
+        if spot_group.instances.count < spot_group.desired_capacity # Spot group does not have required capacity          
           
+          # Set last time spot group failed
+          AWSElastigroup.store.set('aws-elastigroup-last-fail--'+@spot_name){ Time.now()}          
+            
+          # Set demand group to max capacity 
           if demand_group.desired_capacity != demand_group.max_size
             puts "Starting up on-demand instances"
             demand_group.set_desired_capacity({
               :desired_capacity => demand_group.max_size
             })
           end
-        else
-          puts "Spot group ok"
-          if demand_group.desired_capacity != demand_group.min_size
-            puts "Stopping on-demand instances"
+        else # Spot group ok
+          # Check how long spot instances have been running (consecutively)
+          last_fail_time = AWSElastigroup.store.get('aws-elastigroup-last-fail-'+@spot_name)
+          if last_fail_time.nil?
+            last_fail_time = Time.now() - 1800
+          end
+          last_fail = ((Time.now() - last_fail_time) / 60).floor
+          safe_interval = @safe_interval
+          safe_interval ||= 15 # Default safe_interval value
+          
+          if last_fail >= safe_interval && demand_group.desired_capacity != demand_group.min_size
+            # Stopping on-demand instances
             demand_group.set_desired_capacity({
               :desired_capacity => demand_group.min_size
             })
@@ -44,9 +73,7 @@ module AWSElastigroup
         on_demand_group = resource.group(@on_demand_name)
         on_demand_group.desired_capacity = on_demand_group.max_size
       end
-    end
-          
-    attr_accessor :key, :secret, :groups
+    end # End Group class    
     
     def initialize
       @groups = Array.new
@@ -55,6 +82,7 @@ module AWSElastigroup
     def add_group
       @groups << yield(Group.new)
     end
+    
   end
   
   @@config = Configuration.new
@@ -100,14 +128,18 @@ module AWSElastigroup
     #)
     #resp
     
-    @@scheduler = Rufus::Scheduler.new
-    
-    @@scheduler.every '15s' do
+    @@scheduler.every '1m' do
       AWSElastigroup.config.groups.each do |group|
         #Check group spot status: true = ok, false = instances running < desired capacity
         puts "Checking group #{group.name}"
         group.check_spot_status
       end
+    end
+    
+    AWSElastigroup.config.groups.each do |group|
+      #Check group spot status: true = ok, false = instances running < desired capacity
+      puts "Checking group #{group.name}"
+      group.check_spot_status
     end
 
   end
