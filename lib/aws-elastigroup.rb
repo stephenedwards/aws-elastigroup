@@ -23,12 +23,6 @@ module AWSElastigroup
     class Group
       attr_accessor :name, :region, :on_demand_name, :spot_name, :safe_interval
       
-      def spot_group
-        client = AWSElastigroup.aws::AutoScaling::Client.new(:region => @region)
-        resource = Aws::AutoScaling::Resource.new(client: client)
-        group = resource.group(@spot_name) 
-      end
-      
       def check_spot_status
         client = AWSElastigroup.aws::AutoScaling::Client.new(:region => @region)
         resource = Aws::AutoScaling::Resource.new(client: client)
@@ -39,7 +33,7 @@ module AWSElastigroup
         if spot_group.instances.count < spot_group.desired_capacity # Spot group does not have required capacity          
           
           # Set last time spot group failed
-          AWSElastigroup.store.set('aws-elastigroup-last-fail--'+@spot_name){ Time.now()}          
+          AWSElastigroup.store.set('aws-elastigroup-last-fail-'+@spot_name){ Time.now()}          
             
           # Set demand group to max capacity 
           if demand_group.desired_capacity != demand_group.max_size
@@ -51,28 +45,28 @@ module AWSElastigroup
         else # Spot group ok
           # Check how long spot instances have been running (consecutively)
           last_fail_time = AWSElastigroup.store.get('aws-elastigroup-last-fail-'+@spot_name)
+          
+          # Default last fail time is 30 minutes = 1800 sec
           if last_fail_time.nil?
             last_fail_time = Time.now() - 1800
           end
           last_fail = ((Time.now() - last_fail_time) / 60).floor
-          safe_interval = @safe_interval
-          safe_interval ||= 15 # Default safe_interval value
           
+          # Get safe_interval
+          safe_interval = @safe_interval
+          safe_interval ||= 30 # Default safe_interval value
+          
+          # If spot group has passed the safer interval and demand group has running instances
           if last_fail >= safe_interval && demand_group.desired_capacity != demand_group.min_size
+            
             # Stopping on-demand instances
             demand_group.set_desired_capacity({
               :desired_capacity => demand_group.min_size
             })
           end
         end
-      end
+      end      
       
-      def failover
-        client = AWSElastigroup.aws::AutoScaling::Client.new(:region => @region)
-        resource = Aws::AutoScaling::Resource.new(client: client)        
-        on_demand_group = resource.group(@on_demand_name)
-        on_demand_group.desired_capacity = on_demand_group.max_size
-      end
     end # End Group class    
     
     def initialize
@@ -116,32 +110,11 @@ module AWSElastigroup
   module_function :check_groups
   
   def run
-    #client = @@aws::AutoScaling::Client.new(:region => "eu-central-1")
-    #resource = Aws::AutoScaling::Resource.new(client: client)
-    #resource.group("foostix-app-group")
-    
-    #ec2 = @@aws::EC2::Client.new
-    #resp = ec2.describe_spot_price_history(
-    #  :instance_types => ['m4.xlarge'], 
-    #  :product_descriptions => ['Linux/UNIX'],
-    #  :start_time => (Time.now - 60*15).iso8601
-    #)
-    #resp
-    
+    AWSElastigroup.check_groups
     @@scheduler.every '1m' do
-      AWSElastigroup.config.groups.each do |group|
-        #Check group spot status: true = ok, false = instances running < desired capacity
-        puts "Checking group #{group.name}"
-        group.check_spot_status
-      end
+      AWSElastigroup.check_groups
     end
     
-    AWSElastigroup.config.groups.each do |group|
-      #Check group spot status: true = ok, false = instances running < desired capacity
-      puts "Checking group #{group.name}"
-      group.check_spot_status
-    end
-
   end
   module_function :run
   
